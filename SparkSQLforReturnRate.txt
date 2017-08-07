@@ -1,0 +1,78 @@
+package SparkTest
+
+import java.sql.Date
+import org.apache.spark._
+import org.apache.spark.sql._
+import org.apache.spark.sql.types._
+
+/**
+  * Created by OP035308 on 2017/8/2.
+  * 功能：读取三个表的数据，退货、销售、基表信息后进行退货率的统计
+  */
+object SSQL3 {
+
+  //Define Date started
+ // val startdate = Date.valueOf("2017-1-1")
+  //不解，需要加个0才成功。。估计是字符比较
+  val startdate = "2017-01-01"
+  //Define Filelocation folder
+  val rsFilePath = "E:\\Hadoop\\Spark\\return\\"
+  //use case class Sales,Return,Base
+  //后续看看为何用DateType定义不行
+  case class Sales(PN: String, Sqty: Int, Svalue: Int,Sdate :Date)
+  case class Return(PN: String, Rqty: Int, Rvalue: Int, Sdate: Date)
+  case class Base(PN: String, BDec: String, DBu: String, DFac: String)
+  //销售数据
+  def sRddToDFCase(sparkSession: SparkSession,filestr : String): DataFrame = {
+    import sparkSession.implicits._
+    val srRDD = sparkSession.sparkContext
+      .textFile(rsFilePath+filestr, 2)
+      .map(x => x.split(" ")).map(x => Sales(x(0), x(1).trim().toInt, x(2).trim().toInt,Date.valueOf(x(3).trim()))).toDF()
+    srRDD
+  }
+  //退货数据
+  def rRddToDFCase(sparkSession: SparkSession,filestr : String): DataFrame = {
+    import sparkSession.implicits._
+    val srRDD = sparkSession.sparkContext
+      .textFile(rsFilePath+filestr, 2)
+      .map(x => x.split(" ")).map(x => Return(x(0), x(1).trim().toInt, x(2).trim().toInt,Date.valueOf(x(3).trim()))).toDF()
+    srRDD
+  }
+  //料号对应的基表数据
+  def baseRddToDFCase(sparkSession: SparkSession,filestr : String): DataFrame = {
+    import sparkSession.implicits._
+    val baseRDD = sparkSession.sparkContext
+      .textFile(rsFilePath+filestr, 2)
+      .map(x => x.split(" ")).map(x => Base(x(0),x(1), x(2),x(3))).toDF()
+    baseRDD
+  }
+
+  def main(agrs: Array[String]): Unit = {
+    val conf = new SparkConf().setMaster("local[2]")
+    val sparkSession = SparkSession.builder().appName("SSQL3")
+      .config(conf).getOrCreate()
+    import sparkSession.sql
+    //use case class convert RDD to DataFrame
+    val SalesDF = sRddToDFCase(sparkSession,"sales.txt")
+    val ReturnDF = rRddToDFCase(sparkSession,"return.txt")
+    val BaseDF = baseRddToDFCase(sparkSession,"Base.txt")
+   // SalesDF.show()
+   // ReturnDF.show()
+    //BaseDF.show()
+    SalesDF.createOrReplaceTempView("Sales")
+    ReturnDF.createOrReplaceTempView("Return")
+    BaseDF.createOrReplaceTempView("Base")
+    //为什么不能用别名计算退货率...
+    val sqlstr = "Select DBu,month(SDate) as M,sum(Rqty) as RQty,sum(Sqty) as SQty,round(sum(Rqty)/sum(Sqty),4) as RRate from Base left join "+
+      "(select PN,Sqty,0 as Rqty,Sdate from Sales union all select PN,0 as Sqty,Rqty,Sdate from Return) as SR on Base.PN = SR.PN "+
+      "where Sdate >= '" + startdate +"' Group by DBu,M order by M"
+    val resultDF1= sql(sqlstr)
+    resultDF1.persist()
+    resultDF1.show()
+    //筛选只看电商
+    val resultDF2 = resultDF1.filter(_(0)=="电商")
+    resultDF2.show()
+
+
+  }
+}
